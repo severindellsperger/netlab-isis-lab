@@ -17,18 +17,24 @@ graph TB
         LAN1(["LAN · DIS election"])
         r1["r1 · L1"]
         r2["r2 · L1"]
+        stub_r1[/"10.1.1.0/24"/]
+        stub_r2[/"10.1.2.0/24"/]
         br1 -. "metric 20 ⚠️" .- LAN1
         br2 --- LAN1
         LAN1 --- r1
         LAN1 --- r2
+        r1 --- stub_r1
+        r2 --- stub_r2
     end
 
     subgraph A3["Area 49.0003 · P2P"]
         direction TB
         br4["br4 · L1/L2"]
         r5["r5 · L1"]
+        stub_r5[/"10.3.1.0/24"/]
         ext[/"ext · 192.168.100.0/24"/]
         br4 --- r5
+        r5 --- stub_r5
         r5 -. "redistribute connected ↑" .- ext
     end
 
@@ -37,8 +43,12 @@ graph TB
         br3["br3 · L1/L2"]
         r3["r3 · L1"]
         r4["r4 · L1"]
+        stub_r3[/"10.2.1.0/24"/]
+        stub_r4[/"10.2.2.0/24"/]
         br3 --- r3
         br3 --- r4
+        r3 --- stub_r3
+        r4 --- stub_r4
     end
 
     br1 == "L2 · metric 5" === br4
