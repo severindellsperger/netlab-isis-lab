@@ -56,10 +56,12 @@ nodes:
   br1:   # Area 1 ↔ L2 backbone — direct link to Area 3 (shorter L2 path)
     isis:
       type: level-1-2
+    config: [ "frr/l1-into-l2.j2" ]
 
   br2:   # Area 1 ↔ L2 backbone — reaches Area 3 via Area 2 (longer L2 path)
     isis:
       type: level-1-2
+    config: [ "frr/l1-into-l2.j2" ]
 
   # ── Area 49.0002 ─────────────────────────────────────────────────────────────
   # Two L1 routers connected via point-to-point links to the L1/L2 border
@@ -78,6 +80,7 @@ nodes:
     isis:
       area: "49.0002"
       type: level-1-2
+    config: [ "frr/l1-into-l2.j2" ]
 
   # ── Area 49.0003 ─────────────────────────────────────────────────────────────
   # Two routers on a point-to-point link (no DIS election on P2P).
@@ -90,6 +93,7 @@ nodes:
     isis:
       area: "49.0003"
       type: level-1-2
+    config: [ "frr/l1-into-l2.j2" ]
 
   # ── External host (non-IS-IS) ─────────────────────────────────────────────────
   # 'ext' is a plain Linux host that does NOT run IS-IS.  It is connected to r5
