@@ -23,15 +23,6 @@ graph TB
         LAN1 --- r2
     end
 
-    subgraph A2["Area 49.0002 · P2P"]
-        direction TB
-        br3["br3 · L1/L2"]
-        r3["r3 · L1"]
-        r4["r4 · L1"]
-        br3 --- r3
-        br3 --- r4
-    end
-
     subgraph A3["Area 49.0003 · P2P"]
         direction TB
         br4["br4 · L1/L2"]
@@ -39,6 +30,15 @@ graph TB
         ext[/"ext · 192.168.100.0/24"/]
         br4 --- r5
         r5 -. "redistribute connected ↑" .- ext
+    end
+
+    subgraph A2["Area 49.0002 · P2P"]
+        direction TB
+        br3["br3 · L1/L2"]
+        r3["r3 · L1"]
+        r4["r4 · L1"]
+        br3 --- r3
+        br3 --- r4
     end
 
     br1 == "L2 · metric 5" === br4
