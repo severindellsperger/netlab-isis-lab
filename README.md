@@ -226,7 +226,7 @@ route-map LEAK_AREA3 permit 10
 !
 
 !-- Inside the IS-IS process: leak matching L2 routes into L1
-router isis 1
+router isis Gandalf
  redistribute isis level-2 into level-1 route-map LEAK_AREA3
 !
 
@@ -301,7 +301,7 @@ route-map REDIST_CONNECTED permit 10
 !
 
 !-- Redistribute connected routes into IS-IS (Level-1, since r5 is L1 only)
-router isis 1
+router isis Gandalf
  redistribute connected route-map REDIST_CONNECTED
 !
 
