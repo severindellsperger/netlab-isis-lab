@@ -124,7 +124,7 @@ An **L1/L2** router participates in both levels simultaneously. It maintains:
 - an **L1 LSDB** for its local area, and
 - an **L2 LSDB** shared with all other L1/L2 routers.
 
-It advertises a **default route** into its local area so that pure L1 routers can reach destinations in other areas. It also leaks (summarises) the L1 prefixes of its area into the L2 topology so that other areas can reach them.
+It advertises a **default route** into its local area so that pure L1 routers can reach destinations in other areas. It also leaks (summarises) the L1 prefixes of its area into the L2 topology so that other areas can reach them. In FRR this requires explicit configuration — each border router runs `redistribute isis level-1 into level-2` (applied via the custom template `frr/l1-into-l2.j2` in this lab).
 
 ### DIS Election and the Pseudo-Node
 
@@ -309,7 +309,7 @@ end
 write memory
 ```
 
-> **Note:** `r5` is a Level-1 router, so the redistributed prefix is announced in the L1 LSDB of Area 49.0003.  `br4` (the L1/L2 border router) will automatically promote it into the L2 LSDB, making it reachable from all other areas.
+> **Note:** `r5` is a Level-1 router, so the redistributed prefix is announced in the L1 LSDB of Area 49.0003.  `br4` (the L1/L2 border router) promotes it into the L2 LSDB via `redistribute isis level-1 into level-2` (configured via `frr/l1-into-l2.j2`), making it reachable from all other areas.
 
 #### Step 3 — Verify the fix (after redistribution)
 
