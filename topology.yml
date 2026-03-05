@@ -15,9 +15,9 @@
 #                 via "redistribute connected" on the attached router (r5)
 #
 # Areas:
-#   49.00.01 – Area 1  (4-router LAN for DIS election demo)
-#   49.00.02 – Area 2  (point-to-point links only)
-#   49.00.03 – Area 3  (point-to-point link)
+#   49.0001 – Area 1  (4-router LAN for DIS election demo)
+#   49.0002 – Area 2  (point-to-point links only)
+#   49.0003 – Area 3  (point-to-point link)
 #
 # Note: In IS-IS there is no concept of an "ABR" (Area Border Router, which
 #       is OSPF terminology). The routers that participate in both L1 and L2
@@ -34,11 +34,11 @@ module: [ isis ]
 
 # Default area applied to every node unless overridden.
 isis:
-  area: 49.00.01
+  area: "49.0001"
 
 nodes:
 
-  # ── Area 49.00.01 ─────────────────────────────────────────────────────────────
+  # ── Area 49.0001 ─────────────────────────────────────────────────────────────
   # r1, r2, and br2 share a multi-access LAN segment → IS-IS DIS election here.
   # br1 is connected to r1 and r2 via separate P2P links (see links section).
   # The elected DIS generates a pseudo-node LSP representing the broadcast link.
@@ -61,34 +61,34 @@ nodes:
     isis:
       type: level-1-2
 
-  # ── Area 49.00.02 ─────────────────────────────────────────────────────────────
+  # ── Area 49.0002 ─────────────────────────────────────────────────────────────
   # Two L1 routers connected via point-to-point links to the L1/L2 border
   # router.  No LAN segment → no DIS election in this area.
   r3:
     isis:
-      area: 49.00.02
+      area: "49.0002"
       type: level-1
 
   r4:
     isis:
-      area: 49.00.02
+      area: "49.0002"
       type: level-1
 
   br3:   # Area 2 ↔ L2 backbone
     isis:
-      area: 49.00.02
+      area: "49.0002"
       type: level-1-2
 
-  # ── Area 49.00.03 ─────────────────────────────────────────────────────────────
+  # ── Area 49.0003 ─────────────────────────────────────────────────────────────
   # Two routers on a point-to-point link (no DIS election on P2P).
   r5:
     isis:
-      area: 49.00.03
+      area: "49.0003"
       type: level-1
 
   br4:   # Area 3 ↔ L2 backbone
     isis:
-      area: 49.00.03
+      area: "49.0003"
       type: level-1-2
 
   # ── External host (non-IS-IS) ─────────────────────────────────────────────────
@@ -102,7 +102,7 @@ nodes:
 
 links:
 
-  # ── Area 49.00.01 LAN (multi-access, 3 routers) ───────────────────────────────
+  # ── Area 49.0001 LAN (multi-access, 3 routers) ───────────────────────────────
   # IS-IS elects a DIS on this segment (highest priority → highest MAC address).
   # The DIS creates a pseudo-node LSP that represents the shared LAN.
   #
@@ -135,7 +135,7 @@ links:
         metric: 20   # higher → r2 prefers br2 as L1 default gateway
     br1:
 
-  # ── Customer (stub) networks in Area 49.00.01 ─────────────────────────────────
+  # ── Customer (stub) networks in Area 49.0001 ─────────────────────────────────
   - r1:
     role: stub
     prefix: 10.1.1.0/24
@@ -144,7 +144,7 @@ links:
     role: stub
     prefix: 10.1.2.0/24
 
-  # ── Area 49.00.02 (point-to-point links) ──────────────────────────────────────
+  # ── Area 49.0002 (point-to-point links) ──────────────────────────────────────
   # Each L1 router connects to the L1/L2 border router via a separate P2P link.
   # No LAN segment → no DIS election in this area.
   - r3:
@@ -153,7 +153,7 @@ links:
   - r4:
     br3:
 
-  # ── Customer (stub) networks in Area 49.00.02 ─────────────────────────────────
+  # ── Customer (stub) networks in Area 49.0002 ─────────────────────────────────
   - r3:
     role: stub
     prefix: 10.2.1.0/24
@@ -162,12 +162,12 @@ links:
     role: stub
     prefix: 10.2.2.0/24
 
-  # ── Area 49.00.03 (point-to-point) ────────────────────────────────────────────
+  # ── Area 49.0003 (point-to-point) ────────────────────────────────────────────
   # No DIS election on a P2P link; IS-IS forms a direct adjacency instead.
   - r5:
     br4:
 
-  # ── Customer (stub) network in Area 49.00.03 ──────────────────────────────────
+  # ── Customer (stub) network in Area 49.0003 ──────────────────────────────────
   - r5:
     role: stub
     prefix: 10.3.1.0/24
