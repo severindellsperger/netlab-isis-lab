@@ -19,7 +19,8 @@ graph TB
         r2["r2 · L1"]
         stub_r1[/"10.1.1.0/24"/]
         stub_r2[/"10.1.2.0/24"/]
-        br1 -. "metric 20 ⚠️" .- LAN1
+        br1 -. "P2P metric 20 ⚠️" .- r1
+        br1 -. "P2P metric 20 ⚠️" .- r2
         br2 --- LAN1
         LAN1 --- r1
         LAN1 --- r2
@@ -57,8 +58,9 @@ graph TB
 ```
 
 > ⚠️ **Suboptimal routing highlighted:** `r1`/`r2` prefer `br2` as their L1 default gateway
-> (lower L1 metric) but the shortest end-to-end path to Area 3 goes via `br1` (direct L2 link,
-> metric 5). See the [Suboptimal Inter-Area Routing](#suboptimal-inter-area-routing) section for details
+> (lower L1 cost — `br2` is reachable via the LAN at metric 10) but the shortest end-to-end
+> path to Area 3 goes via `br1` (P2P metric 20 + direct L2 link metric 5 = 25, vs 10+10+10=30
+> via `br2`). See the [Suboptimal Inter-Area Routing](#suboptimal-inter-area-routing) section for details
 > and the [Route Leaking](#route-leaking--fixing-suboptimal-routing) section for the fix.
 
 > **Note:** In IS-IS there is no concept of an ABR (Area Border Router — that is OSPF terminology).
@@ -132,10 +134,10 @@ On a **multi-access LAN segment** (e.g., the Area 1 LAN in this lab), IS-IS elec
 - **Role of the DIS:** The DIS generates a **pseudo-node LSP** (Type 2 LSP) that logically represents the LAN segment as a virtual node in the link-state database.  All routers on the LAN appear connected to this pseudo-node rather than to each other, which reduces the number of adjacencies that need to be tracked.
 - **Flooding:** On a LAN, IS-IS still forms full adjacencies between every pair of routers (each router synchronises its LSDB with the DIS), but LSA flooding is coordinated by the DIS.
 
-You can observe DIS election on the Area 1 LAN (`r1`, `r2`, `br1`, `br2`).  Areas 2 and 3 use point-to-point links — **no DIS election occurs** on P2P interfaces.
+You can observe DIS election on the Area 1 LAN (`r1`, `r2`, `br2`).  `br1` is connected to `r1` and `r2` via separate P2P links instead, which is why its metric **can** be differentiated (see [Suboptimal Inter-Area Routing](#suboptimal-inter-area-routing)).  Areas 2 and 3 use point-to-point links — **no DIS election occurs** on P2P interfaces.
 
 ```bash
-# Show IS-IS adjacencies on r1 (expect neighbours r2, br1, br2 on the LAN)
+# Show IS-IS adjacencies on r1 (expect neighbours r2 and br2 on the LAN, plus br1 on P2P)
 netlab connect r1 -- vtysh -c "show isis neighbor"
 
 # Show IS-IS database on r1 — look for a pseudo-node LSP (Type 2)
@@ -146,14 +148,27 @@ netlab connect r1 -- vtysh -c "show isis database detail"
 
 This lab deliberately demonstrates a classic IS-IS pitfall.
 
-The Area 1 LAN has **two** L1/L2 border routers with deliberately different L1 metrics:
+> **Why IS-IS LAN metrics cannot differentiate border routers**
+>
+> On a multi-access LAN, each router's SPF cost to any other router on that LAN equals
+> the router's **own** outgoing interface metric plus the pseudo-node's cost back to the
+> neighbour — which IS-IS always sets to zero.  Concretely, if r1's LAN interface metric
+> is 10, r1 sees *every* LAN neighbour at cost 10, regardless of what metric br1 or br2
+> configure on their own LAN interfaces.  Setting a higher metric on br1's LAN port
+> therefore has **no effect** on r1's default-route selection.
+>
+> The correct solution is to move br1 off the shared LAN and connect it to r1 and r2 via
+> dedicated P2P links.  On a P2P link the metric on r1's side is the exact SPF cost r1
+> will use to reach br1, so differentiation works as expected.
 
-| Router | L1 metric on Area 1 LAN | L2 path to Area 3 (49.0003) | Total cost |
-|--------|--------------------------|------------------------------|------------|
-| `br2` | **10** ← preferred by r1/r2 | `br2 → br3 → br4` | 10 + 10 + 10 = **30** |
-| `br1` | 20 (higher, less preferred) | `br1 → br4` (direct) | 20 + 5 = **25** ✅ |
+The Area 1 topology has **two** L1/L2 border routers with deliberately different effective costs as seen from r1/r2:
 
-Because `r1` and `r2` see a lower **L1** metric to `br2`, they install a default route via `br2`. Traffic destined for `10.3.1.0/24` (Area 3) therefore travels the *longer* path:
+| Router | How r1/r2 reach it | Effective L1 cost | L2 path to Area 3 (49.0003) | Total cost |
+|--------|-------------------|-------------------|-----------------------------|------------|
+| `br2` | via LAN (default metric 10) | **10** ← preferred | `br2 → br3 → br4` | 10 + 10 + 10 = **30** |
+| `br1` | via P2P (metric 20) | 20 (higher, less preferred) | `br1 → br4` (direct) | 20 + 5 = **25** ✅ |
+
+Because `r1` and `r2` see a lower **L1** cost to `br2`, they install a default route via `br2`. Traffic destined for `10.3.1.0/24` (Area 3) therefore travels the *longer* path:
 
 ```
 r1 → br2 → br3 → br4 → r5   (total IS-IS cost: 30)

@@ -39,7 +39,8 @@ isis:
 nodes:
 
   # ── Area 49.0001 ─────────────────────────────────────────────────────────────
-  # Four routers share a single LAN segment → IS-IS DIS election occurs here.
+  # r1, r2, and br2 share a multi-access LAN segment → IS-IS DIS election here.
+  # br1 is connected to r1 and r2 via separate P2P links (see links section).
   # The elected DIS generates a pseudo-node LSP representing the broadcast link.
   # r1 and r2 are pure Level-1 routers; br1 and br2 are L1/L2 border routers.
   # Both L1/L2 routers inject a default route into Area 1, which creates the
@@ -101,23 +102,38 @@ nodes:
 
 links:
 
-  # ── Area 49.0001 LAN (multi-access, 4 routers) ───────────────────────────────
+  # ── Area 49.0001 LAN (multi-access, 3 routers) ───────────────────────────────
   # IS-IS elects a DIS on this segment (highest priority → highest MAC address).
   # The DIS creates a pseudo-node LSP that represents the shared LAN.
   #
-  # br1 is given a higher L1 metric on this LAN so that r1 and r2 prefer
-  # br2 as their default gateway into the L2 backbone.  However, br1 has a
-  # direct L2 link to br4 (Area 3) while br2 must traverse br3 first.
-  # This is the suboptimal routing scenario: L1 routers pick br2 based on
-  # the L1 metric alone, unaware that the end-to-end path via br1 is shorter.
+  # Only r1, r2, and br2 share this LAN.  br1 is intentionally kept off the
+  # LAN and connected to r1/r2 via separate P2P links (see below).
+  #
+  # On a multi-access LAN the IS-IS SPF cost from any router to every
+  # neighbour on the same LAN equals that router's own outgoing interface
+  # metric (because the pseudo-node always advertises zero-cost links back).
+  # This means interface metrics on br1 or br2 have no effect on how r1/r2
+  # perceive the cost to each border router — both would appear at the same
+  # cost (r1's own LAN metric).  Moving br1 onto a separate P2P link with a
+  # higher metric is therefore the correct way to make r1/r2 prefer br2 as
+  # their L1 default gateway while still demonstrating DIS election on the LAN.
   - r1:
     r2:
-    br1:
-      isis:
-        metric: 20   # higher → r1/r2 prefer br2 as L1 default gateway
     br2:
+
+  # ── P2P links: br1 to r1 and r2 (higher metric → r1/r2 prefer br2) ──────────
+  # Because these are point-to-point links, the metric set on r1/r2's side is
+  # exactly the SPF cost r1/r2 will use to reach br1.  Setting it to 20 (versus
+  # br2's effective cost of 10 via the LAN) ensures r1 and r2 install a single
+  # default route via br2, creating the suboptimal routing scenario.
+  - r1:
       isis:
-        metric: 10   # lower  → preferred L1 default gateway
+        metric: 20   # higher → r1 prefers br2 as L1 default gateway
+    br1:
+  - r2:
+      isis:
+        metric: 20   # higher → r2 prefers br2 as L1 default gateway
+    br1:
 
   # ── Customer (stub) networks in Area 49.0001 ─────────────────────────────────
   - r1:
