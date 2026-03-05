@@ -11,6 +11,8 @@
 #                 the end-to-end shortest path (demonstrated via metrics)
 #   Route leak  – Leaking specific L2 prefixes back into L1 to fix
 #                 suboptimal inter-area routing
+#   Redistrib.  – Importing a non-IS-IS connected prefix into the IS-IS domain
+#                 via "redistribute connected" on the attached router (r5)
 #
 # Areas:
 #   49.0001 – Area 1  (4-router LAN for DIS election demo)
@@ -88,6 +90,15 @@ nodes:
       area: 49.0003
       type: level-1-2
 
+  # ── External host (non-IS-IS) ─────────────────────────────────────────────────
+  # 'ext' is a plain Linux host that does NOT run IS-IS.  It is connected to r5
+  # via a dedicated link (192.168.100.0/24).  The prefix is a simple connected
+  # route on r5 — it does NOT appear in the IS-IS LSDB until the operator
+  # configures "redistribute connected" on r5 (see README for the exercise).
+  ext:
+    module: []    # no routing protocol — this node is outside IS-IS
+    device: linux
+
 links:
 
   # ── Area 49.0001 LAN (multi-access, 4 routers) ───────────────────────────────
@@ -144,6 +155,16 @@ links:
   - r5:
     role: stub
     prefix: 10.3.1.0/24
+
+  # ── External (non-IS-IS) network ─────────────────────────────────────────────
+  # This link is NOT a stub — it is a regular point-to-point link between r5
+  # (which runs IS-IS) and ext (which does NOT).  Because ext has no IS-IS
+  # process, the r5 interface on this link is a plain connected route.
+  # Configuring "redistribute connected" on r5 brings 192.168.100.0/24 into
+  # the IS-IS LSDB so every other router can reach the external host.
+  - r5:
+    ext:
+    prefix: 192.168.100.0/24
 
   # ── L2 Backbone links ─────────────────────────────────────────────────────────
   # These P2P links form the Level-2 "backbone" between the L1/L2 border routers.

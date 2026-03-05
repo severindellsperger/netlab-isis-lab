@@ -2,38 +2,43 @@
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/severindellsperger/netlab-isis-lab?machine=basicLinux32gb&devcontainer_path=.devcontainer/devcontainer.json)
 
-A hands-on lab that uses [NetLab](https://netlab.tools) and [Containerlab](https://containerlab.dev) with [FRRouting (FRR)](https://frrouting.org) containers to demonstrate IS-IS multi-area routing, DIS election, pseudo-nodes, suboptimal inter-area routing, and route leaking — all in a single reproducible topology.
+A hands-on lab that uses [NetLab](https://netlab.tools) and [Containerlab](https://containerlab.dev) with [FRRouting (FRR)](https://frrouting.org) containers to demonstrate IS-IS multi-area routing, DIS election, pseudo-nodes, suboptimal inter-area routing, route leaking, and redistribution of external routes — all in a single reproducible topology.
 
 ---
 
 ## Lab Topology
 
 ```mermaid
-graph LR
-    subgraph A1["Area 49.0001 · LAN (DIS election)"]
-        LAN1(["LAN — DIS election"])
-        r1["r1 · L1"]
-        r2["r2 · L1"]
+graph TB
+    subgraph A1["Area 49.0001 · LAN — DIS election"]
+        direction TB
         br1["br1 · L1/L2"]
         br2["br2 · L1/L2"]
-        r1 --- LAN1
-        r2 --- LAN1
+        LAN1(["LAN · DIS election"])
+        r1["r1 · L1"]
+        r2["r2 · L1"]
+        br1 -. "metric 20 ⚠️" .- LAN1
         br2 --- LAN1
-        br1 -. "L1 metric 20 ⚠️" .- LAN1
-    end
-
-    subgraph A3["Area 49.0003 · P2P"]
-        r5["r5 · L1"]
-        br4["br4 · L1/L2"]
-        r5 --- br4
+        LAN1 --- r1
+        LAN1 --- r2
     end
 
     subgraph A2["Area 49.0002 · P2P"]
+        direction TB
+        br3["br3 · L1/L2"]
         r3["r3 · L1"]
         r4["r4 · L1"]
-        br3["br3 · L1/L2"]
-        r3 --- br3
-        r4 --- br3
+        br3 --- r3
+        br3 --- r4
+    end
+
+    subgraph A3["Area 49.0003 · P2P"]
+        direction TB
+        br4["br4 · L1/L2"]
+        r5["r5 · L1"]
+        ext[/"ext · 192.168.100.0/24"/]
+        br4 --- r5
+        r5 -. "redistribute connected ↑" .- ext
     end
 
     br1 == "L2 · metric 5" === br4
@@ -60,6 +65,7 @@ graph LR
 | `br3` | L1/L2 border | 49.0002 ↔ L2 | — |
 | `r5` | L1 only | 49.0003 | `10.3.1.0/24` |
 | `br4` | L1/L2 border | 49.0003 ↔ L2 | — |
+| `ext` | **no IS-IS** | — (external host) | `192.168.100.0/24` *(redistributed from r5)* |
 
 > **Note on IP addresses:** NetLab auto-assigns addresses from its default pools.
 > Loopbacks use `10.0.0.x/32` and transit links use `172.16.x.x`. Run `netlab up`
@@ -216,6 +222,86 @@ netlab connect r1 -- traceroute 10.3.1.1
 ```
 
 The leaked specific route is preferred over the default route due to **longest prefix match** — a `/24` beats `0.0.0.0/0`. Traffic to `10.3.1.0/24` will now follow the optimal path through `br1`.
+
+---
+
+### Redistributing External Routes into IS-IS
+
+#### Background
+
+IS-IS, like OSPF, is a **link-state IGP** — it only knows about routers and prefixes that are explicitly part of the IS-IS domain.  Any network attached to a router that is *not* configured as an IS-IS passive interface, and *not* reachable via another IS-IS router, will be invisible to the rest of the domain.
+
+In this lab the Linux host `ext` is connected to `r5` via the `192.168.100.0/24` subnet.  `ext` does **not** run IS-IS (or any routing protocol).  Until redistribution is configured on `r5`, no other router in the lab can reach `192.168.100.0/24` — it simply does not appear in any LSDB.
+
+Redistribution solves this: `r5` imports the connected prefix into IS-IS and advertises it in its own LSP, making the external network reachable from every area.
+
+#### When is redistribution needed?
+
+- Connecting IS-IS to a non-IS-IS network (e.g., a server segment, a management network, or a legacy subnet).
+- Importing prefixes from another routing protocol (e.g., `redistribute bgp` or `redistribute static`).
+- Making a directly attached network reachable without turning it into a passive IS-IS interface (useful when you do not want IS-IS hello packets on that interface).
+
+#### Step 1 — Observe the problem (before redistribution)
+
+```bash
+# On r1: verify that 192.168.100.0/24 is NOT present
+netlab connect r1 -- vtysh -c "show ip route 192.168.100.0/24"
+# Expected: % Network not in table
+
+# On r5: the prefix IS in the routing table as a connected route
+netlab connect r5 -- vtysh -c "show ip route connected"
+# Expected:  C   192.168.100.0/24 is directly connected, <interface>
+
+# But it is absent from the IS-IS LSDB
+netlab connect r5 -- vtysh -c "show isis database detail"
+# 192.168.100.0/24 will NOT appear in r5's LSP
+```
+
+#### Step 2 — Configure redistribution on r5
+
+Connect to `r5` and enter the following FRR configuration:
+
+```bash
+netlab connect r5 vtysh
+```
+
+```
+configure terminal
+
+!-- (Optional) restrict redistribution to the specific external prefix only
+ip prefix-list EXT_NETWORKS seq 5 permit 192.168.100.0/24
+
+route-map REDIST_CONNECTED permit 10
+ match ip address prefix-list EXT_NETWORKS
+!
+
+!-- Redistribute connected routes into IS-IS (Level-1, since r5 is L1 only)
+router isis 1
+ redistribute connected route-map REDIST_CONNECTED
+!
+
+end
+write memory
+```
+
+> **Note:** `r5` is a Level-1 router, so the redistributed prefix is announced in the L1 LSDB of Area 49.0003.  `br4` (the L1/L2 border router) will automatically promote it into the L2 LSDB, making it reachable from all other areas.
+
+#### Step 3 — Verify the fix (after redistribution)
+
+```bash
+# On r5: the LSP now includes 192.168.100.0/24
+netlab connect r5 -- vtysh -c "show isis database detail"
+# Look for:  IP Reachability: 192.168.100.0/24
+
+# On r1 (different area): the external prefix should now be reachable
+netlab connect r1 -- vtysh -c "show ip route 192.168.100.0/24"
+# Expected:  i L2 192.168.100.0/24 via <br1-or-br2-ip>  [115/...]
+
+# Connectivity test from r1 to the external host
+netlab connect r1 -- ping 192.168.100.1 -c 5
+```
+
+> **Redistribution vs. passive interface:** A passive IS-IS interface also advertises a connected prefix into IS-IS, but it still sends IS-IS hello packets on the interface (and can form adjacencies if another IS-IS router is present). Redistribution via `redistribute connected` makes the prefix visible in IS-IS **without** enabling IS-IS on that interface at all — which is the correct choice for a host-facing segment like the one toward `ext`.
 
 ---
 
