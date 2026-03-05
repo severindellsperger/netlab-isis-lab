@@ -14,8 +14,12 @@
 #
 # Areas:
 #   49.0001 – Area 1  (4-router LAN for DIS election demo)
-#   49.0002 – Area 2  (3-router LAN)
+#   49.0002 – Area 2  (point-to-point links only)
 #   49.0003 – Area 3  (point-to-point link)
+#
+# Note: In IS-IS there is no concept of an "ABR" (Area Border Router, which
+#       is OSPF terminology). The routers that participate in both L1 and L2
+#       are simply called L1/L2 routers or border routers (br1–br4 here).
 #
 # Device:   FRRouting (FRR) – open-source routing suite
 # Provider: Containerlab (clab)
@@ -35,9 +39,9 @@ nodes:
   # ── Area 49.0001 ─────────────────────────────────────────────────────────────
   # Four routers share a single LAN segment → IS-IS DIS election occurs here.
   # The elected DIS generates a pseudo-node LSP representing the broadcast link.
-  # r1 and r2 are pure Level-1 routers; abr1 and abr2 are L1/L2 border routers.
-  # Both ABRs inject a default route into Area 1, which creates the suboptimal
-  # routing scenario described in the links section below.
+  # r1 and r2 are pure Level-1 routers; br1 and br2 are L1/L2 border routers.
+  # Both L1/L2 routers inject a default route into Area 1, which creates the
+  # suboptimal routing scenario described in the links section below.
   r1:
     isis:
       type: level-1
@@ -46,16 +50,17 @@ nodes:
     isis:
       type: level-1
 
-  abr1:   # Area 1 ↔ L2 backbone — direct link to Area 3 (shorter L2 path)
+  br1:   # Area 1 ↔ L2 backbone — direct link to Area 3 (shorter L2 path)
     isis:
       type: level-1-2
 
-  abr2:   # Area 1 ↔ L2 backbone — reaches Area 3 via Area 2 (longer L2 path)
+  br2:   # Area 1 ↔ L2 backbone — reaches Area 3 via Area 2 (longer L2 path)
     isis:
       type: level-1-2
 
   # ── Area 49.0002 ─────────────────────────────────────────────────────────────
-  # Three routers on a LAN — DIS election also happens here.
+  # Two L1 routers connected via point-to-point links to the L1/L2 border
+  # router.  No LAN segment → no DIS election in this area.
   r3:
     isis:
       area: 49.0002
@@ -66,7 +71,7 @@ nodes:
       area: 49.0002
       type: level-1
 
-  abr3:   # Area 2 ↔ L2 backbone
+  br3:   # Area 2 ↔ L2 backbone
     isis:
       area: 49.0002
       type: level-1-2
@@ -78,7 +83,7 @@ nodes:
       area: 49.0003
       type: level-1
 
-  abr4:   # Area 3 ↔ L2 backbone
+  br4:   # Area 3 ↔ L2 backbone
     isis:
       area: 49.0003
       type: level-1-2
@@ -89,17 +94,17 @@ links:
   # IS-IS elects a DIS on this segment (highest priority → highest MAC address).
   # The DIS creates a pseudo-node LSP that represents the shared LAN.
   #
-  # abr1 is given a higher L1 metric on this LAN so that r1 and r2 prefer
-  # abr2 as their default gateway into the L2 backbone.  However, abr1 has a
-  # direct L2 link to abr4 (Area 3) while abr2 must traverse abr3 first.
-  # This is the suboptimal routing scenario: L1 routers pick abr2 based on
-  # the L1 metric alone, unaware that the end-to-end path via abr1 is shorter.
+  # br1 is given a higher L1 metric on this LAN so that r1 and r2 prefer
+  # br2 as their default gateway into the L2 backbone.  However, br1 has a
+  # direct L2 link to br4 (Area 3) while br2 must traverse br3 first.
+  # This is the suboptimal routing scenario: L1 routers pick br2 based on
+  # the L1 metric alone, unaware that the end-to-end path via br1 is shorter.
   - r1:
     r2:
-    abr1:
+    br1:
       isis:
-        metric: 20   # higher → r1/r2 prefer abr2 as L1 default gateway
-    abr2:
+        metric: 20   # higher → r1/r2 prefer br2 as L1 default gateway
+    br2:
       isis:
         metric: 10   # lower  → preferred L1 default gateway
 
@@ -112,11 +117,14 @@ links:
     role: stub
     prefix: 10.1.2.0/24
 
-  # ── Area 49.0002 LAN (multi-access, 3 routers) ───────────────────────────────
-  # A second LAN segment where DIS election can be observed in Area 2.
+  # ── Area 49.0002 (point-to-point links) ──────────────────────────────────────
+  # Each L1 router connects to the L1/L2 border router via a separate P2P link.
+  # No LAN segment → no DIS election in this area.
   - r3:
-    r4:
-    abr3:
+    br3:
+
+  - r4:
+    br3:
 
   # ── Customer (stub) networks in Area 49.0002 ─────────────────────────────────
   - r3:
@@ -130,7 +138,7 @@ links:
   # ── Area 49.0003 (point-to-point) ────────────────────────────────────────────
   # No DIS election on a P2P link; IS-IS forms a direct adjacency instead.
   - r5:
-    abr4:
+    br4:
 
   # ── Customer (stub) network in Area 49.0003 ──────────────────────────────────
   - r5:
@@ -140,24 +148,24 @@ links:
   # ── L2 Backbone links ─────────────────────────────────────────────────────────
   # These P2P links form the Level-2 "backbone" between the L1/L2 border routers.
   #
-  # abr1 ──(metric 5)── abr4          direct to Area 3 (total L2 cost: 5)
-  # abr2 ──(metric 10)── abr3 ──(metric 10)── abr4   via Area 2 (total: 20)
+  # br1 ──(metric 5)── br4          direct to Area 3 (total L2 cost: 5)
+  # br2 ──(metric 10)── br3 ──(metric 10)── br4   via Area 2 (total: 20)
   #
-  # Because r1/r2 prefer abr2 for their L1 default route, traffic to Area 3
-  # follows the longer path (abr2→abr3→abr4) instead of the shorter one
-  # (abr1→abr4).  Route leaking from abr1 into Area 1 fixes this.
+  # Because r1/r2 prefer br2 for their L1 default route, traffic to Area 3
+  # follows the longer path (br2→br3→br4) instead of the shorter one
+  # (br1→br4).  Route leaking from br1 into Area 1 fixes this.
 
-  - abr1:
-    abr4:
+  - br1:
+    br4:
     isis:
       metric: 5
 
-  - abr2:
-    abr3:
+  - br2:
+    br3:
     isis:
       metric: 10
 
-  - abr3:
-    abr4:
+  - br3:
+    br4:
     isis:
       metric: 10

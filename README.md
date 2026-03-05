@@ -9,56 +9,57 @@ A hands-on lab that uses [NetLab](https://netlab.tools) and [Containerlab](https
 ## Lab Topology
 
 ```mermaid
-graph TD
-    subgraph A1["Area 49.0001"]
+graph LR
+    subgraph A1["Area 49.0001 · LAN (DIS election)"]
         LAN1(["LAN — DIS election"])
         r1["r1 · L1"]
         r2["r2 · L1"]
-        abr1["abr1 · L1/L2"]
-        abr2["abr2 · L1/L2"]
+        br1["br1 · L1/L2"]
+        br2["br2 · L1/L2"]
         r1 --- LAN1
         r2 --- LAN1
-        abr2 --- LAN1
-        abr1 -. "L1 metric 20 ⚠️" .- LAN1
+        br2 --- LAN1
+        br1 -. "L1 metric 20 ⚠️" .- LAN1
     end
 
-    subgraph A2["Area 49.0002"]
-        LAN2(["LAN — DIS election"])
+    subgraph A3["Area 49.0003 · P2P"]
+        r5["r5 · L1"]
+        br4["br4 · L1/L2"]
+        r5 --- br4
+    end
+
+    subgraph A2["Area 49.0002 · P2P"]
         r3["r3 · L1"]
         r4["r4 · L1"]
-        abr3["abr3 · L1/L2"]
-        r3 --- LAN2
-        r4 --- LAN2
-        abr3 --- LAN2
+        br3["br3 · L1/L2"]
+        r3 --- br3
+        r4 --- br3
     end
 
-    subgraph A3["Area 49.0003 · P2P, no DIS"]
-        r5["r5 · L1"]
-        abr4["abr4 · L1/L2"]
-        r5 --- abr4
-    end
-
-    abr1 == "L2 · metric 5" === abr4
-    abr2 == "L2 · metric 10" === abr3
-    abr3 == "L2 · metric 10" === abr4
+    br1 == "L2 · metric 5" === br4
+    br2 == "L2 · metric 10" === br3
+    br3 == "L2 · metric 10" === br4
 ```
 
-> ⚠️ **Suboptimal routing highlighted:** `r1`/`r2` prefer `abr2` as their L1 default gateway
-> (lower L1 metric) but the shortest end-to-end path to Area 3 goes via `abr1` (direct L2 link,
+> ⚠️ **Suboptimal routing highlighted:** `r1`/`r2` prefer `br2` as their L1 default gateway
+> (lower L1 metric) but the shortest end-to-end path to Area 3 goes via `br1` (direct L2 link,
 > metric 5). See the [Suboptimal Inter-Area Routing](#suboptimal-inter-area-routing) section for details
 > and the [Route Leaking](#route-leaking--fixing-suboptimal-routing) section for the fix.
+
+> **Note:** In IS-IS there is no concept of an ABR (Area Border Router — that is OSPF terminology).
+> The routers participating in both L1 and L2 are simply called **L1/L2 routers** or **border routers** (`br1`–`br4`).
 
 | Router | IS-IS Level | Area | Attached stub network |
 |--------|-------------|------|-----------------------|
 | `r1` | L1 only | 49.0001 | `10.1.1.0/24` |
 | `r2` | L1 only | 49.0001 | `10.1.2.0/24` |
-| `abr1` | L1/L2 border | 49.0001 ↔ L2 | — |
-| `abr2` | L1/L2 border | 49.0001 ↔ L2 | — |
+| `br1` | L1/L2 border | 49.0001 ↔ L2 | — |
+| `br2` | L1/L2 border | 49.0001 ↔ L2 | — |
 | `r3` | L1 only | 49.0002 | `10.2.1.0/24` |
 | `r4` | L1 only | 49.0002 | `10.2.2.0/24` |
-| `abr3` | L1/L2 border | 49.0002 ↔ L2 | — |
+| `br3` | L1/L2 border | 49.0002 ↔ L2 | — |
 | `r5` | L1 only | 49.0003 | `10.3.1.0/24` |
-| `abr4` | L1/L2 border | 49.0003 ↔ L2 | — |
+| `br4` | L1/L2 border | 49.0003 ↔ L2 | — |
 
 > **Note on IP addresses:** NetLab auto-assigns addresses from its default pools.
 > Loopbacks use `10.0.0.x/32` and transit links use `172.16.x.x`. Run `netlab up`
@@ -89,14 +90,14 @@ netlab connect r1 -- vtysh -c "show isis database detail"
 
 The **L2 LSDB** is shared among *all* L1/L2 routers across every area. It describes the full inter-area topology — every area's prefixes, all L2 links, and their metrics. L2 forms the IS-IS backbone — unlike OSPF, there is no mandatory "area 0"; the backbone is simply the set of L2 adjacencies between L1/L2 border routers.
 
-On an L1/L2 router (`abr1`–`abr4`) you can inspect both databases side by side:
+On an L1/L2 router (`br1`–`br4`) you can inspect both databases side by side:
 
 ```bash
-# Show the L2 LSDB on abr1 — contains LSPs from ALL areas
-netlab connect abr1 -- vtysh -c "show isis database level-2"
+# Show the L2 LSDB on br1 — contains LSPs from ALL areas
+netlab connect br1 -- vtysh -c "show isis database level-2"
 
 # Compare with the L1 LSDB (Area 49.0001 entries only)
-netlab connect abr1 -- vtysh -c "show isis database level-1"
+netlab connect br1 -- vtysh -c "show isis database level-1"
 ```
 
 ### Level-1-2 (L1/L2) — Border Router
@@ -109,16 +110,16 @@ It advertises a **default route** into its local area so that pure L1 routers ca
 
 ### DIS Election and the Pseudo-Node
 
-On a **multi-access LAN segment** (e.g., the Area 1 or Area 2 LAN in this lab), IS-IS elects a **Designated IS (DIS)**.
+On a **multi-access LAN segment** (e.g., the Area 1 LAN in this lab), IS-IS elects a **Designated IS (DIS)**.
 
 - **Election rule:** The router with the highest configured priority wins.  If priorities are equal, the highest SNPA (MAC address) wins.  There is no concept of a Backup DIS — the election is pre-emptive.
 - **Role of the DIS:** The DIS generates a **pseudo-node LSP** (Type 2 LSP) that logically represents the LAN segment as a virtual node in the link-state database.  All routers on the LAN appear connected to this pseudo-node rather than to each other, which reduces the number of adjacencies that need to be tracked.
 - **Flooding:** On a LAN, IS-IS still forms full adjacencies between every pair of routers (each router synchronises its LSDB with the DIS), but LSA flooding is coordinated by the DIS.
 
-You can observe DIS election on the Area 1 LAN (`r1`, `r2`, `abr1`, `abr2`) and the Area 2 LAN (`r3`, `r4`, `abr3`).  The Area 3 link (`r5` ↔ `abr4`) is a point-to-point link — **no DIS election occurs** on P2P interfaces.
+You can observe DIS election on the Area 1 LAN (`r1`, `r2`, `br1`, `br2`).  Areas 2 and 3 use point-to-point links — **no DIS election occurs** on P2P interfaces.
 
 ```bash
-# Show IS-IS adjacencies on r1 (expect neighbours r2, abr1, abr2 on the LAN)
+# Show IS-IS adjacencies on r1 (expect neighbours r2, br1, br2 on the LAN)
 netlab connect r1 -- vtysh -c "show isis neighbor"
 
 # Show IS-IS database on r1 — look for a pseudo-node LSP (Type 2)
@@ -133,25 +134,25 @@ The Area 1 LAN has **two** L1/L2 border routers with deliberately different L1 m
 
 | Router | L1 metric on Area 1 LAN | L2 path to Area 3 (49.0003) | Total cost |
 |--------|--------------------------|------------------------------|------------|
-| `abr2` | **10** ← preferred by r1/r2 | `abr2 → abr3 → abr4` | 10 + 10 + 10 = **30** |
-| `abr1` | 20 (higher, less preferred) | `abr1 → abr4` (direct) | 20 + 5 = **25** ✅ |
+| `br2` | **10** ← preferred by r1/r2 | `br2 → br3 → br4` | 10 + 10 + 10 = **30** |
+| `br1` | 20 (higher, less preferred) | `br1 → br4` (direct) | 20 + 5 = **25** ✅ |
 
-Because `r1` and `r2` see a lower **L1** metric to `abr2`, they install a default route via `abr2`. Traffic destined for `10.3.1.0/24` (Area 3) therefore travels the *longer* path:
+Because `r1` and `r2` see a lower **L1** metric to `br2`, they install a default route via `br2`. Traffic destined for `10.3.1.0/24` (Area 3) therefore travels the *longer* path:
 
 ```
-r1 → abr2 → abr3 → abr4 → r5   (total IS-IS cost: 30)
+r1 → br2 → br3 → br4 → r5   (total IS-IS cost: 30)
 ```
 
 The optimal path is:
 
 ```
-r1 → abr1 → abr4 → r5          (total IS-IS cost: 25)
+r1 → br1 → br4 → r5          (total IS-IS cost: 25)
 ```
 
 `r1` cannot discover this because it has no L2 LSDB — it only knows the L1 metric to its nearest border router.
 
 ```bash
-# Verify the suboptimal default route on r1 — next-hop should be abr2
+# Verify the suboptimal default route on r1 — next-hop should be br2
 netlab connect r1 -- vtysh -c "show ip route isis"
 
 # Traceroute from r1 to the Area 3 stub network to observe the longer path
@@ -160,26 +161,26 @@ netlab connect r1 -- vtysh -c "show ip route 10.3.1.0/24"
 
 ### Route Leaking — Fixing Suboptimal Routing
 
-**Route leaking** (also called *L2-to-L1 redistribution*) pushes specific L2 prefixes back into an L1 area as L1 routes. Once `r1` and `r2` have a *specific* L1 route to `10.3.1.0/24` via `abr1`, they can compare its total cost against the same prefix via `abr2` and select the optimal path.
+**Route leaking** (also called *L2-to-L1 redistribution*) pushes specific L2 prefixes back into an L1 area as L1 routes. Once `r1` and `r2` have a *specific* L1 route to `10.3.1.0/24` via `br1`, they can compare its total cost against the same prefix via `br2` and select the optimal path.
 
 #### Step 1 — Observe the problem (before leaking)
 
 ```bash
 # On r1: only a default route exists — no specific route to Area 3
 netlab connect r1 -- vtysh -c "show ip route isis"
-# Expected output includes:  i*L1 0.0.0.0/0 via <abr2-ip>
+# Expected output includes:  i*L1 0.0.0.0/0 via <br2-ip>
 
 # Trace the actual path to 10.3.1.1
 netlab connect r1 -- traceroute 10.3.1.1
-# Expected: r1 → abr2 → abr3 → abr4 → r5  (suboptimal)
+# Expected: r1 → br2 → br3 → br4 → r5  (suboptimal)
 ```
 
-#### Step 2 — Configure route leaking on abr1
+#### Step 2 — Configure route leaking on br1
 
-Connect to `abr1` and enter the following FRR configuration:
+Connect to `br1` and enter the following FRR configuration:
 
 ```bash
-netlab connect abr1 vtysh
+netlab connect br1 vtysh
 ```
 
 ```
@@ -205,16 +206,16 @@ write memory
 #### Step 3 — Verify the fix (after leaking)
 
 ```bash
-# On r1: a specific L1 route to 10.3.1.0/24 should now appear via abr1
+# On r1: a specific L1 route to 10.3.1.0/24 should now appear via br1
 netlab connect r1 -- vtysh -c "show ip route 10.3.1.0/24"
-# Expected:  i L1 10.3.1.0/24 via <abr1-ip>  [115/25]
+# Expected:  i L1 10.3.1.0/24 via <br1-ip>  [115/25]
 
-# Trace the path again — should now go via abr1 (shorter)
+# Trace the path again — should now go via br1 (shorter)
 netlab connect r1 -- traceroute 10.3.1.1
-# Expected: r1 → abr1 → abr4 → r5  (optimal)
+# Expected: r1 → br1 → br4 → r5  (optimal)
 ```
 
-The leaked specific route is preferred over the default route due to **longest prefix match** — a `/24` beats `0.0.0.0/0`. Traffic to `10.3.1.0/24` will now follow the optimal path through `abr1`.
+The leaked specific route is preferred over the default route due to **longest prefix match** — a `/24` beats `0.0.0.0/0`. Traffic to `10.3.1.0/24` will now follow the optimal path through `br1`.
 
 ---
 
@@ -261,13 +262,13 @@ netlab up
 After a few seconds, IS-IS adjacencies should form and the routing tables converge.
 
 ```bash
-# Show IS-IS neighbours on abr1
-netlab connect abr1 -- vtysh -c "show isis neighbor"
+# Show IS-IS neighbours on br1
+netlab connect br1 -- vtysh -c "show isis neighbor"
 
 # Show IS-IS database (LSDB) on r1 — note the pseudo-node LSPs
 netlab connect r1 -- vtysh -c "show isis database"
 
-# Show the routing table on r1 (expect a default route via abr2)
+# Show the routing table on r1 (expect a default route via br2)
 netlab connect r1 -- vtysh -c "show ip route isis"
 
 # Ping a host in the Area 3 customer network from r1
