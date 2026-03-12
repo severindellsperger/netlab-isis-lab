@@ -2,7 +2,9 @@
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/severindellsperger/netlab-isis-lab?machine=basicLinux32gb&devcontainer_path=.devcontainer/devcontainer.json)
 
-A hands-on lab that uses [NetLab](https://netlab.tools) and [Containerlab](https://containerlab.dev) with [FRRouting (FRR)](https://frrouting.org) containers to demonstrate IS-IS multi-area routing, DIS election, pseudo-nodes, suboptimal inter-area routing, route leaking, and redistribution of external routes — all in a single reproducible topology.
+A hands-on lab that uses [NetLab](https://netlab.tools) and [Containerlab](https://containerlab.dev) with [Nokia SR Linux](https://learn.srlinux.dev) containers to demonstrate IS-IS multi-area routing, DIS election, pseudo-nodes, suboptimal inter-area routing, route leaking, and redistribution of external routes — all in a single reproducible topology.
+
+> **No manual image download required.** Nokia SR Linux images are publicly available and pulled automatically by Containerlab on first launch.
 
 ---
 
@@ -98,10 +100,10 @@ For destinations outside its area, an L1 router installs a **default route** poi
 
 ```bash
 # Show the L1 LSDB on r1 — contains only LSPs from Area 49.0001
-netlab connect r1 -- vtysh -c "show isis database"
+netlab connect r1 -- sr_cli "show network-instance default protocols isis database level 1"
 
-# Show detailed L1 LSDB entries
-netlab connect r1 -- vtysh -c "show isis database detail"
+# Show detailed L1 LSDB entries (includes prefixes and adjacencies)
+netlab connect r1 -- sr_cli "show network-instance default protocols isis database detail"
 ```
 
 ### Level-2 (L2) — Inter-area (Backbone) Routing
@@ -112,10 +114,10 @@ On an L1/L2 router (`br1`–`br4`) you can inspect both databases side by side:
 
 ```bash
 # Show the L2 LSDB on br1 — contains LSPs from ALL areas
-netlab connect br1 -- vtysh -c "show isis database level-2"
+netlab connect br1 -- sr_cli "show network-instance default protocols isis database level 2"
 
 # Compare with the L1 LSDB (Area 49.0001 entries only)
-netlab connect br1 -- vtysh -c "show isis database level-1"
+netlab connect br1 -- sr_cli "show network-instance default protocols isis database level 1"
 ```
 
 ### Level-1-2 (L1/L2) — Border Router
@@ -138,10 +140,10 @@ You can observe DIS election on the Area 1 LAN (`r1`, `r2`, `br2`).  `br1` is co
 
 ```bash
 # Show IS-IS adjacencies on r1 (expect neighbours r2 and br2 on the LAN, plus br1 on P2P)
-netlab connect r1 -- vtysh -c "show isis neighbor"
+netlab connect r1 -- sr_cli "show network-instance default protocols isis adjacency"
 
-# Show IS-IS database on r1 — look for a pseudo-node LSP (Type 2)
-netlab connect r1 -- vtysh -c "show isis database detail"
+# Show IS-IS database on r1 — look for a pseudo-node LSP (Type 2, node ID ends in .XX where XX != 00)
+netlab connect r1 -- sr_cli "show network-instance default protocols isis database detail"
 ```
 
 ### Suboptimal Inter-Area Routing
@@ -184,10 +186,13 @@ r1 → br1 → br4 → r5          (total IS-IS cost: 25)
 
 ```bash
 # Verify the suboptimal default route on r1 — next-hop should be br2
-netlab connect r1 -- vtysh -c "show ip route isis"
+netlab connect r1 -- sr_cli "show network-instance default protocols isis route level 1"
 
-# Traceroute from r1 to the Area 3 stub network to observe the longer path
-netlab connect r1 -- vtysh -c "show ip route 10.3.1.0/24"
+# Show the full IPv4 routing table on r1
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast"
+
+# Check the specific route to Area 3 (before leaking — only default route exists)
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast route 10.3.1.0/24 longer-prefixes"
 ```
 
 ### Route Leaking — Fixing Suboptimal Routing
@@ -198,51 +203,54 @@ netlab connect r1 -- vtysh -c "show ip route 10.3.1.0/24"
 
 ```bash
 # On r1: only a default route exists — no specific route to Area 3
-netlab connect r1 -- vtysh -c "show ip route isis"
-# Expected output includes:  i*L1 0.0.0.0/0 via <br2-ip>
+netlab connect r1 -- sr_cli "show network-instance default protocols isis route level 1"
+# Expected: default route (0.0.0.0/0) via br2's address only
 
-# Trace the actual path to 10.3.1.1
-netlab connect r1 -- traceroute 10.3.1.1
+# Traceroute the actual path to 10.3.1.1
+netlab connect r1 -- sr_cli "traceroute network-instance default 10.3.1.1"
 # Expected: r1 → br2 → br3 → br4 → r5  (suboptimal)
 ```
 
 #### Step 2 — Configure route leaking on br1
 
-Connect to `br1` and enter the following FRR configuration:
+Connect to `br1` and enter an interactive SR Linux session:
 
 ```bash
-netlab connect br1 vtysh
+netlab connect br1
 ```
 
+Inside the SR Linux CLI, run the following commands:
+
 ```
-configure terminal
+# Enter candidate (edit) mode
+enter candidate
 
-!-- Prefix-list matching the Area 3 stub network
-ip prefix-list AREA3_PREFIXES seq 5 permit 10.3.1.0/24
+# Define a prefix set matching the Area 3 stub network
+set routing-policy prefix-set AREA3_PREFIXES prefix 10.3.1.0/24 mask-length-range exact
 
-!-- Route-map that permits matched prefixes
-route-map LEAK_AREA3 permit 10
- match ip address prefix-list AREA3_PREFIXES
-!
+# Define a route policy that permits matched prefixes
+set routing-policy policy LEAK_AREA3 statement 10 match prefix-set AREA3_PREFIXES
+set routing-policy policy LEAK_AREA3 statement 10 action policy-result accept
 
-!-- Inside the IS-IS process: leak matching L2 routes into L1
-router isis Gandalf
- redistribute isis level-2 into level-1 route-map LEAK_AREA3
-!
+# Apply the policy to IS-IS level-1 exports (leaks matching L2 routes into L1)
+set network-instance default protocols isis instance Gandalf level 1 export-policy [LEAK_AREA3]
 
-end
-write memory
+# Commit the configuration
+commit now
 ```
 
 #### Step 3 — Verify the fix (after leaking)
 
 ```bash
 # On r1: a specific L1 route to 10.3.1.0/24 should now appear via br1
-netlab connect r1 -- vtysh -c "show ip route 10.3.1.0/24"
-# Expected:  i L1 10.3.1.0/24 via <br1-ip>  [115/25]
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast route 10.3.1.0/24 longer-prefixes"
+# Expected: IS-IS L1 route to 10.3.1.0/24 with next-hop via br1
 
-# Trace the path again — should now go via br1 (shorter)
-netlab connect r1 -- traceroute 10.3.1.1
+# On r1: the IS-IS route table should also show the specific leaked prefix
+netlab connect r1 -- sr_cli "show network-instance default protocols isis route level 1"
+
+# Traceroute again — should now go via br1 (shorter)
+netlab connect r1 -- sr_cli "traceroute network-instance default 10.3.1.1"
 # Expected: r1 → br1 → br4 → r5  (optimal)
 ```
 
@@ -263,50 +271,51 @@ Redistribution solves this: `r5` imports the connected prefix into IS-IS and adv
 #### When is redistribution needed?
 
 - Connecting IS-IS to a non-IS-IS network (e.g., a server segment, a management network, or a legacy subnet).
-- Importing prefixes from another routing protocol (e.g., `redistribute bgp` or `redistribute static`).
+- Importing prefixes from another routing protocol (e.g., redistributing BGP or static routes).
 - Making a directly attached network reachable without turning it into a passive IS-IS interface (useful when you do not want IS-IS hello packets on that interface).
 
 #### Step 1 — Observe the problem (before redistribution)
 
 ```bash
 # On r1: verify that 192.168.100.0/24 is NOT present
-netlab connect r1 -- vtysh -c "show ip route 192.168.100.0/24"
-# Expected: % Network not in table
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast route 192.168.100.0/24 longer-prefixes"
+# Expected: no matching routes
 
-# On r5: the prefix IS in the routing table as a connected route
-netlab connect r5 -- vtysh -c "show ip route connected"
-# Expected:  C   192.168.100.0/24 is directly connected, <interface>
+# On r5: the prefix IS present as a connected route
+netlab connect r5 -- sr_cli "show network-instance default route-table ipv4-unicast"
+# Expected: 192.168.100.0/24 is directly connected
 
 # But it is absent from the IS-IS LSDB
-netlab connect r5 -- vtysh -c "show isis database detail"
+netlab connect r5 -- sr_cli "show network-instance default protocols isis database detail"
 # 192.168.100.0/24 will NOT appear in r5's LSP
 ```
 
 #### Step 2 — Configure redistribution on r5
 
-Connect to `r5` and enter the following FRR configuration:
+Connect to `r5` and enter an interactive SR Linux session:
 
 ```bash
-netlab connect r5 vtysh
+netlab connect r5
 ```
 
+Inside the SR Linux CLI, run the following commands:
+
 ```
-configure terminal
+# Enter candidate (edit) mode
+enter candidate
 
-!-- (Optional) restrict redistribution to the specific external prefix only
-ip prefix-list EXT_NETWORKS seq 5 permit 192.168.100.0/24
+# Define a prefix set matching the external network
+set routing-policy prefix-set EXT_NETWORKS prefix 192.168.100.0/24 mask-length-range exact
 
-route-map REDIST_CONNECTED permit 10
- match ip address prefix-list EXT_NETWORKS
-!
+# Define a route policy permitting matched connected routes
+set routing-policy policy REDIST_CONNECTED statement 10 match prefix-set EXT_NETWORKS
+set routing-policy policy REDIST_CONNECTED statement 10 action policy-result accept
 
-!-- Redistribute connected routes into IS-IS (Level-1, since r5 is L1 only)
-router isis Gandalf
- redistribute connected route-map REDIST_CONNECTED
-!
+# Apply the policy to IS-IS exports (redistributes connected routes into IS-IS)
+set network-instance default protocols isis instance Gandalf export-policy [REDIST_CONNECTED]
 
-end
-write memory
+# Commit the configuration
+commit now
 ```
 
 > **Note:** `r5` is a Level-1 router, so the redistributed prefix is announced in the L1 LSDB of Area 49.0003.  `br4` (the L1/L2 border router) will automatically promote it into the L2 LSDB, making it reachable from all other areas.
@@ -315,18 +324,84 @@ write memory
 
 ```bash
 # On r5: the LSP now includes 192.168.100.0/24
-netlab connect r5 -- vtysh -c "show isis database detail"
-# Look for:  IP Reachability: 192.168.100.0/24
+netlab connect r5 -- sr_cli "show network-instance default protocols isis database detail"
+# Look for:  192.168.100.0/24 in r5's LSP
 
 # On r1 (different area): the external prefix should now be reachable
-netlab connect r1 -- vtysh -c "show ip route 192.168.100.0/24"
-# Expected:  i L2 192.168.100.0/24 via <br1-or-br2-ip>  [115/...]
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast route 192.168.100.0/24 longer-prefixes"
+# Expected: IS-IS route to 192.168.100.0/24 via br1 or br2
 
 # Connectivity test from r1 to the external host
-netlab connect r1 -- ping 192.168.100.1 -c 5
+netlab connect r1 -- sr_cli "ping network-instance default 192.168.100.1 count 5"
 ```
 
-> **Redistribution vs. passive interface:** A passive IS-IS interface also advertises a connected prefix into IS-IS, but it still sends IS-IS hello packets on the interface (and can form adjacencies if another IS-IS router is present). Redistribution via `redistribute connected` makes the prefix visible in IS-IS **without** enabling IS-IS on that interface at all — which is the correct choice for a host-facing segment like the one toward `ext`.
+> **Redistribution vs. passive interface:** A passive IS-IS interface also advertises a connected prefix into IS-IS, but it still sends IS-IS hello packets on the interface (and can form adjacencies if another IS-IS router is present). Redistribution via a policy applied to the IS-IS instance's `export-policy` makes the prefix visible in IS-IS **without** enabling IS-IS on that interface at all — which is the correct choice for a host-facing segment like the one toward `ext`.
+
+---
+
+## SR Linux IS-IS Command Reference
+
+The table below lists the most important SR Linux CLI commands for working with IS-IS in this lab. Run them interactively (after `netlab connect <node>`) or as one-liners using `netlab connect <node> -- sr_cli "<command>"`.
+
+### Show Commands
+
+| Task | SR Linux Command |
+|------|-----------------|
+| Show all IS-IS adjacencies | `show network-instance default protocols isis adjacency` |
+| Show IS-IS interfaces | `show network-instance default protocols isis interface` |
+| Show full LSDB (both levels) | `show network-instance default protocols isis database` |
+| Show L1 LSDB only | `show network-instance default protocols isis database level 1` |
+| Show L2 LSDB only | `show network-instance default protocols isis database level 2` |
+| Show detailed LSDB (with prefixes) | `show network-instance default protocols isis database detail` |
+| Show IS-IS routes (L1) | `show network-instance default protocols isis route level 1` |
+| Show IS-IS routes (L2) | `show network-instance default protocols isis route level 2` |
+| Show full IPv4 routing table | `show network-instance default route-table ipv4-unicast` |
+| Show a specific prefix | `show network-instance default route-table ipv4-unicast route <prefix> longer-prefixes` |
+| Show IS-IS instance summary | `show network-instance default protocols isis instance` |
+
+### Connectivity Tests
+
+| Task | SR Linux Command |
+|------|-----------------|
+| Ping a destination | `ping network-instance default <ip> count 5` |
+| Traceroute to a destination | `traceroute network-instance default <ip>` |
+
+### Configuration Workflow
+
+All configuration changes in SR Linux follow a candidate/commit model:
+
+```
+# 1. Enter candidate mode
+enter candidate
+
+# 2. Make changes (examples)
+set routing-policy ...
+set network-instance default protocols isis ...
+
+# 3. Validate (optional — shows what will change)
+diff
+
+# 4. Commit
+commit now
+```
+
+To discard uncommitted changes and return to running config:
+
+```
+discard /
+```
+
+### Useful One-Liners
+
+```bash
+# Check IS-IS adjacencies on every border router at once
+for node in br1 br2 br3 br4; do
+  echo "=== $node ==="; netlab connect $node -- sr_cli "show network-instance default protocols isis adjacency"
+done
+
+# Watch IS-IS routes on r1 (re-run every 5 seconds)
+watch -n 5 "netlab connect r1 -- sr_cli 'show network-instance default protocols isis route level 1'"
+```
 
 ---
 
@@ -345,6 +420,8 @@ Follow the official installation guide:
 git clone https://github.com/severindellsperger/netlab-isis-lab.git
 cd netlab-isis-lab
 ```
+
+> **Nokia SR Linux images are pulled automatically** by Containerlab on first launch — no manual download or license required.
 
 ---
 
@@ -366,36 +443,37 @@ netlab up
 
 `netlab up` will:
 1. Parse `topology.yml` and auto-assign IP addresses and IS-IS parameters.
-2. Generate Containerlab and FRR configuration files.
-3. Start all containers via Containerlab.
-4. Deploy the generated FRR configuration to every container.
+2. Generate Containerlab and SR Linux configuration files.
+3. Pull the Nokia SR Linux container image (first run only — cached afterwards).
+4. Start all containers via Containerlab.
+5. Deploy the generated IS-IS configuration to every container.
 
-After a few seconds, IS-IS adjacencies should form and the routing tables converge.
+After a minute or so, IS-IS adjacencies should form and the routing tables converge.
 
 ```bash
 # Show IS-IS neighbours on br1
-netlab connect br1 -- vtysh -c "show isis neighbor"
+netlab connect br1 -- sr_cli "show network-instance default protocols isis adjacency"
 
 # Show IS-IS database (LSDB) on r1 — note the pseudo-node LSPs
-netlab connect r1 -- vtysh -c "show isis database"
+netlab connect r1 -- sr_cli "show network-instance default protocols isis database"
 
 # Show the routing table on r1 (expect a default route via br2)
-netlab connect r1 -- vtysh -c "show ip route isis"
+netlab connect r1 -- sr_cli "show network-instance default route-table ipv4-unicast"
 
 # Ping a host in the Area 3 customer network from r1
-netlab connect r1 -- ping 10.3.1.1 count 5
+netlab connect r1 -- sr_cli "ping network-instance default 10.3.1.1 count 5"
 ```
 
-You can also open an interactive vtysh shell on any device:
+You can also open an interactive SR Linux session on any device:
 
 ```bash
-netlab connect r1 vtysh
+netlab connect r1
 ```
 
 Or connect directly via Docker (container names follow the pattern `clab-<lab-name>-<node>`; run `docker ps` to confirm the exact names for your environment):
 
 ```bash
-docker exec -it clab-netlab-isis-lab-r1 vtysh
+docker exec -it clab-netlab-isis-lab-r1 sr_cli
 ```
 
 ---
