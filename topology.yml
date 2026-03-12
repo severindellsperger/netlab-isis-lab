@@ -23,11 +23,11 @@
 #       is OSPF terminology). The routers that participate in both L1 and L2
 #       are simply called L1/L2 routers or border routers (br1–br4 here).
 #
-# Device:   FRRouting (FRR) – open-source routing suite
+# Device:   Nokia SR Linux – public container image, no manual download needed
 # Provider: Containerlab (clab)
 
 defaults:
-  device: frr
+  device: srlinux
   provider: clab
 
 module: [ isis ]
